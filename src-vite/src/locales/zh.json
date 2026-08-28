@@ -1015,7 +1015,15 @@
     "geo_location": "地点",
     "tags": "标签",
     "comment": "备注",
-    "capture_settings": "拍摄设置"
+    "capture_settings": "拍摄设置",
+    "ai_source": "生成来源",
+    "ai_prompt": "提示词",
+    "ai_negative_prompt": "负面提示词",
+    "ai_model": "AI 模型",
+    "ai_seed": "种子",
+    "ai_workflow": "工作流",
+    "ocr_text": "识别文本",
+    "view_json": "查看 JSON"
   },
   "map": {
     "show_map": "显示地图",

@@ -1015,7 +1015,15 @@
     "geo_location": "Местоположение",
     "tags": "Теги",
     "comment": "Комментарий",
-    "capture_settings": "Параметры съёмки"
+    "capture_settings": "Параметры съёмки",
+    "ai_source": "Создано в",
+    "ai_prompt": "Промпт",
+    "ai_negative_prompt": "Негативный промпт",
+    "ai_model": "Модель ИИ",
+    "ai_seed": "Сид",
+    "ai_workflow": "Рабочий процесс",
+    "ocr_text": "Распознанный текст",
+    "view_json": "Показать JSON"
   },
   "map": {
     "show_map": "Показать карту",

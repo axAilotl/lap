@@ -17,9 +17,27 @@ const MAX_COMMENT_BYTES: usize = 64 * 1024;
 const MAX_CHUNKS: usize = 4096;
 const MAX_STEALTH_BITS: usize = 15 * 8 + 32 + MAX_TEXT_CHUNK_BYTES * 8;
 
+/// Structured metadata retained separately from the editable user comment.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiGenerationMetadata {
+    pub source: String,
+    pub prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub model: Option<String>,
+    pub seed: Option<String>,
+    pub workflow: Option<String>,
+    pub raw_metadata: Option<String>,
+    pub comment: String,
+}
+
 /// Returns AI generation metadata suitable for the user-facing file comment.
 /// Unsupported, malformed, or non-AI PNGs simply return `None`.
 pub fn extract_comment(file_path: &str) -> Option<String> {
+    extract_metadata(file_path).map(|metadata| metadata.comment)
+}
+
+/// Returns structured AI generation metadata from a PNG, when present.
+pub fn extract_metadata(file_path: &str) -> Option<AiGenerationMetadata> {
     if !is_png(file_path) {
         return None;
     }
@@ -32,7 +50,7 @@ pub fn extract_comment(file_path: &str) -> Option<String> {
         return None;
     }
 
-    let mut candidates: Vec<(u8, String)> = Vec::new();
+    let mut candidates: Vec<(u8, AiGenerationMetadata)> = Vec::new();
     for _ in 0..MAX_CHUNKS {
         let mut header = [0u8; 8];
         if reader.read_exact(&mut header).is_err() {
@@ -63,8 +81,8 @@ pub fn extract_comment(file_path: &str) -> Option<String> {
             _ => None,
         };
         if let Some((keyword, value)) = text {
-            if let Some((priority, comment)) = format_ai_metadata(&keyword, &value) {
-                candidates.push((priority, comment));
+            if let Some(candidate) = parse_ai_metadata(&keyword, &value) {
+                candidates.push(candidate);
             }
         }
     }
@@ -73,8 +91,25 @@ pub fn extract_comment(file_path: &str) -> Option<String> {
     candidates
         .into_iter()
         .next()
-        .map(|(_, comment)| comment)
-        .or_else(|| extract_stealth_comment(file_path))
+        .map(|(_, metadata)| metadata)
+        .or_else(|| {
+            extract_stealth_comment(file_path).map(|comment| AiGenerationMetadata {
+                source: "NovelAI".to_string(),
+                prompt: labeled_section(
+                    &comment,
+                    "Prompt:",
+                    &["Negative prompt:", "Model:", "Seed:"],
+                ),
+                negative_prompt: labeled_section(
+                    &comment,
+                    "Negative prompt:",
+                    &["Model:", "Seed:"],
+                ),
+                raw_metadata: Some(comment.clone()),
+                comment,
+                ..Default::default()
+            })
+        })
 }
 
 /// NovelAI stores a compressed metadata payload in the alpha channel's LSBs.
@@ -282,6 +317,137 @@ fn format_ai_metadata(keyword: &str, value: &str) -> Option<(u8, String)> {
     }
 }
 
+fn parse_ai_metadata(keyword: &str, value: &str) -> Option<(u8, AiGenerationMetadata)> {
+    let normalized_keyword = keyword.trim().to_ascii_lowercase();
+    let (priority, comment) = format_ai_metadata(keyword, value)?;
+    let mut metadata = AiGenerationMetadata {
+        source: match normalized_keyword.as_str() {
+            "parameters" => "Stable Diffusion WebUI".to_string(),
+            "prompt" if serde_json::from_str::<Value>(value).is_ok() => "ComfyUI".to_string(),
+            "invokeai_metadata" | "sd-metadata" => "InvokeAI".to_string(),
+            _ => "AI image metadata".to_string(),
+        },
+        raw_metadata: normalize(value),
+        comment,
+        ..Default::default()
+    };
+
+    if normalized_keyword == "parameters" {
+        populate_a1111_metadata(&mut metadata, value);
+    } else if normalized_keyword == "prompt" {
+        if let Ok(parsed) = serde_json::from_str::<Value>(value) {
+            let (positive, negative) = comfy_prompt_sections(&parsed);
+            metadata.prompt = normalize(&positive.join("\n\n"));
+            metadata.negative_prompt = normalize(&negative.join("\n\n"));
+            metadata.model = find_comfy_input(&parsed, &["ckpt_name", "model_name"]);
+            metadata.seed = find_comfy_input(&parsed, &["seed", "noise_seed"]);
+            metadata.workflow = serde_json::to_string(&parsed).ok();
+        } else {
+            metadata.prompt = normalize(value);
+        }
+    } else if let Ok(parsed) = serde_json::from_str::<Value>(value) {
+        metadata.prompt = json_scalar(&parsed, &["prompt", "positive_prompt"]);
+        metadata.negative_prompt = json_scalar(&parsed, &["negative_prompt", "uc"]);
+        metadata.model = json_scalar(&parsed, &["model", "model_name"]);
+        metadata.seed = json_scalar(&parsed, &["seed"]);
+    }
+
+    Some((priority, metadata))
+}
+
+fn populate_a1111_metadata(metadata: &mut AiGenerationMetadata, value: &str) {
+    let negative_marker = "\nNegative prompt:";
+    let settings_markers = ["\nSteps:", "\nSampler:", "\nSeed:"];
+    let settings_start = settings_markers
+        .iter()
+        .filter_map(|marker| value.find(marker))
+        .min();
+
+    if let Some(negative_start) = value.find(negative_marker) {
+        metadata.prompt = normalize(&value[..negative_start]);
+        let negative_value_start = negative_start + negative_marker.len();
+        let negative_end = settings_start
+            .filter(|position| *position > negative_value_start)
+            .unwrap_or(value.len());
+        metadata.negative_prompt = normalize(&value[negative_value_start..negative_end]);
+    } else {
+        metadata.prompt = normalize(&value[..settings_start.unwrap_or(value.len())]);
+    }
+
+    let settings = settings_start
+        .map(|start| value[start + 1..].trim())
+        .unwrap_or("");
+    metadata.model = comma_setting(settings, &["Model", "Model hash"]);
+    metadata.seed = comma_setting(settings, &["Seed"]);
+}
+
+fn comma_setting(value: &str, keys: &[&str]) -> Option<String> {
+    for part in value.split(',') {
+        let part = part.trim();
+        for key in keys {
+            if let Some(found) = part.strip_prefix(&format!("{key}:")) {
+                if let Some(value) = normalize(found) {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn json_scalar(value: &Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    for key in keys {
+        let Some(value) = object.get(*key) else {
+            continue;
+        };
+        let rendered = match value {
+            Value::String(value) => normalize(value),
+            Value::Number(value) => Some(value.to_string()),
+            Value::Bool(value) => Some(value.to_string()),
+            _ => None,
+        };
+        if rendered.is_some() {
+            return rendered;
+        }
+    }
+    None
+}
+
+fn find_comfy_input(value: &Value, keys: &[&str]) -> Option<String> {
+    let nodes = value.as_object()?;
+    for node in nodes.values() {
+        let Some(inputs) = node.get("inputs").and_then(Value::as_object) else {
+            continue;
+        };
+        for key in keys {
+            let Some(value) = inputs.get(*key) else {
+                continue;
+            };
+            let rendered = match value {
+                Value::String(value) => normalize(value),
+                Value::Number(value) => Some(value.to_string()),
+                _ => None,
+            };
+            if rendered.is_some() {
+                return rendered;
+            }
+        }
+    }
+    None
+}
+
+fn labeled_section(value: &str, label: &str, following_labels: &[&str]) -> Option<String> {
+    let start = value.find(label)? + label.len();
+    let tail = &value[start..];
+    let end = following_labels
+        .iter()
+        .filter_map(|next| tail.find(next))
+        .min()
+        .unwrap_or(tail.len());
+    normalize(&tail[..end])
+}
+
 fn format_prompt_metadata(value: &str) -> Option<String> {
     let parsed = serde_json::from_str::<Value>(value).ok();
     if let Some(parsed) = parsed {
@@ -436,9 +602,12 @@ fn normalize(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_comment, format_ai_metadata, format_prompt_metadata, PNG_SIGNATURE};
-    use flate2::write::GzEncoder;
+    use super::{
+        PNG_SIGNATURE, extract_comment, format_ai_metadata, format_prompt_metadata,
+        parse_ai_metadata,
+    };
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use image::{Rgba, RgbaImage};
     use std::fs;
     use std::io::Write;
@@ -452,6 +621,23 @@ mod tests {
     }
 
     #[test]
+    fn structures_automatic1111_parameters() {
+        let (_, metadata) = parse_ai_metadata(
+            "parameters",
+            "cat girl in a library\nNegative prompt: blurry, extra fingers\nSteps: 24, Sampler: Euler, Seed: 987654, Model: cats-v2",
+        )
+        .expect("parameters should be recognized");
+        assert_eq!(metadata.source, "Stable Diffusion WebUI");
+        assert_eq!(metadata.prompt.as_deref(), Some("cat girl in a library"));
+        assert_eq!(
+            metadata.negative_prompt.as_deref(),
+            Some("blurry, extra fingers")
+        );
+        assert_eq!(metadata.model.as_deref(), Some("cats-v2"));
+        assert_eq!(metadata.seed.as_deref(), Some("987654"));
+    }
+
+    #[test]
     fn extracts_comfy_text_nodes() {
         let metadata = format_prompt_metadata(
             r#"{
@@ -462,6 +648,31 @@ mod tests {
         )
         .expect("ComfyUI prompt should be recognized");
         assert_eq!(metadata, "Prompt:\na mountain\nNegative prompt:\nblurry");
+    }
+
+    #[test]
+    fn preserves_comfy_workflow_and_generation_fields() {
+        let (_, metadata) = parse_ai_metadata(
+            "prompt",
+            r#"{
+                "1":{"class_type":"CLIPTextEncode","inputs":{"text":"a mountain"}},
+                "2":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+                "3":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"demo.safetensors"}},
+                "4":{"class_type":"KSampler","inputs":{"positive":["1",0],"negative":["2",0],"seed":42}}
+            }"#,
+        )
+        .expect("ComfyUI prompt should be recognized");
+        assert_eq!(metadata.source, "ComfyUI");
+        assert_eq!(metadata.prompt.as_deref(), Some("a mountain"));
+        assert_eq!(metadata.negative_prompt.as_deref(), Some("blurry"));
+        assert_eq!(metadata.model.as_deref(), Some("demo.safetensors"));
+        assert_eq!(metadata.seed.as_deref(), Some("42"));
+        assert!(
+            metadata
+                .workflow
+                .as_deref()
+                .is_some_and(|value| value.contains("KSampler"))
+        );
     }
 
     #[test]

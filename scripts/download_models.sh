@@ -12,6 +12,8 @@ MODELS=(
   "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx|vision_model.onnx"
   "https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/det_500m.onnx?download=true|det_500m.onnx"
   "https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/w600k_mbf.onnx?download=true|w600k_mbf.onnx"
+  "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten|text-detection.rten"
+  "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten|text-recognition.rten"
 )
 
 echo "Downloading ${#MODELS[@]} models into $TARGET_DIR..."

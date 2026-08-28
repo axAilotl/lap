@@ -32,6 +32,7 @@ mod t_libraw;
 mod t_menu;
 mod t_migration;
 mod t_motion_photo;
+mod t_ocr;
 mod t_pasteboard;
 mod t_protocol;
 mod t_similar;
@@ -69,6 +70,9 @@ async fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(t_video::VideoManager::default())
         .manage(t_ai::AiState(std::sync::Mutex::new(t_ai::AiEngine::new())))
+        .manage(t_ocr::OcrState(std::sync::Mutex::new(
+            t_ocr::OcrEngine::new(),
+        )))
         .manage(t_face::FaceState(std::sync::Arc::new(
             std::sync::Mutex::new(t_face::FaceEngine::new()),
         )))

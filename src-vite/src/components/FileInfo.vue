@@ -380,6 +380,48 @@
             <div class="flex items-start text-[11px] text-base-content/45 py-1.5">{{ $t('file_info.description') }}</div>
             <div class="flex items-center text-[12px] leading-5 text-base-content/75 wrap-break-words py-1.5">{{ fileInfo?.e_description }}</div>
 
+            <template v-if="hasImageAnalysis">
+              <div class="col-span-2 border-t border-base-content/5 my-1"></div>
+
+              <template v-if="fileInfo?.ai_source">
+                <div class="flex items-center text-[11px] text-base-content/45 h-6">{{ $t('file_info.ai_source') }}</div>
+                <div class="flex items-center text-[12px] text-base-content/75">{{ fileInfo.ai_source }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ai_prompt">
+                <div class="flex items-start text-[11px] text-base-content/45 py-1.5">{{ $t('file_info.ai_prompt') }}</div>
+                <div class="text-[12px] leading-5 text-base-content/75 wrap-break-words whitespace-pre-wrap py-1.5">{{ fileInfo.ai_prompt }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ai_negative_prompt">
+                <div class="flex items-start text-[11px] text-base-content/45 py-1.5">{{ $t('file_info.ai_negative_prompt') }}</div>
+                <div class="text-[12px] leading-5 text-base-content/75 wrap-break-words whitespace-pre-wrap py-1.5">{{ fileInfo.ai_negative_prompt }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ai_model">
+                <div class="flex items-center text-[11px] text-base-content/45 h-6">{{ $t('file_info.ai_model') }}</div>
+                <div class="flex items-center text-[12px] text-base-content/75 break-all">{{ fileInfo.ai_model }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ai_seed">
+                <div class="flex items-center text-[11px] text-base-content/45 h-6">{{ $t('file_info.ai_seed') }}</div>
+                <div class="flex items-center text-[12px] text-base-content/75 break-all">{{ fileInfo.ai_seed }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ocr_text">
+                <div class="flex items-start text-[11px] text-base-content/45 py-1.5">{{ $t('file_info.ocr_text') }}</div>
+                <div class="text-[12px] leading-5 text-base-content/75 wrap-break-words whitespace-pre-wrap py-1.5">{{ fileInfo.ocr_text }}</div>
+              </template>
+
+              <template v-if="fileInfo?.ai_workflow">
+                <div class="flex items-start text-[11px] text-base-content/45 py-1.5">{{ $t('file_info.ai_workflow') }}</div>
+                <details class="min-w-0 py-1.5 text-[12px] text-base-content/75">
+                  <summary class="cursor-pointer text-primary/80">{{ $t('file_info.view_json') }}</summary>
+                  <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-box bg-base-300/40 p-2 text-[10px] leading-4">{{ formattedAiWorkflow }}</pre>
+                </details>
+              </template>
+            </template>
+
             <!-- Geo Location -->
             <div class="flex items-center text-[11px] text-base-content/45 h-6">{{ $t('file_info.geo_location') }}</div>
             <div class="flex items-center text-[12px] text-base-content/75">{{ formatGeoLocation() }}</div>
@@ -514,6 +556,24 @@ const previewScale = computed({
 const showBasicInfoPanel = computed(() => config.infoPanel.showBasicInfo);
 const showMetadataPanel = computed(() => config.infoPanel.showMetadata);
 const showMapPanel = computed(() => config.infoPanel.showMap);
+const hasImageAnalysis = computed(() => Boolean(
+  props.fileInfo?.ai_source
+  || props.fileInfo?.ai_prompt
+  || props.fileInfo?.ai_negative_prompt
+  || props.fileInfo?.ai_model
+  || props.fileInfo?.ai_seed
+  || props.fileInfo?.ai_workflow
+  || props.fileInfo?.ocr_text,
+));
+const formattedAiWorkflow = computed(() => {
+  const workflow = props.fileInfo?.ai_workflow;
+  if (!workflow) return '';
+  try {
+    return JSON.stringify(JSON.parse(workflow), null, 2);
+  } catch {
+    return workflow;
+  }
+});
 const isVideoFile = computed(() => Number(props.fileInfo?.file_type || 0) === 2);
 const isLivePhoto = computed(() => (
   props.fileInfo?.media_subtype === 'live_photo' && !!props.fileInfo?.live_photo_video_path

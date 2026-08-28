@@ -4,7 +4,8 @@
 
 // Image support
 pub const NORMAL_IMGS: &[&str] = &[
-    "jpg", "jpeg", "jfif", "png", "gif", "bmp", "tif", "tiff", "webp", "avif", "heic", "heif", "hif", "jxl",
+    "jpg", "jpeg", "jfif", "png", "gif", "bmp", "tif", "tiff", "webp", "avif", "heic", "heif",
+    "hif", "jxl",
 ];
 
 // Image formats decoded through the bundled FFmpeg sidecar.
@@ -55,6 +56,8 @@ pub const VIDEOS: &[&str] = &[
 pub const AI_TEXT_MODEL: &str = "text_model.onnx";
 pub const AI_VISION_MODEL: &str = "vision_model.onnx";
 pub const AI_TOKENIZER: &str = "tokenizer.json";
+pub const OCR_DETECTION_MODEL: &str = "text-detection.rten";
+pub const OCR_RECOGNITION_MODEL: &str = "text-recognition.rten";
 
 // Face Recognition Constants
 

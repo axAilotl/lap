@@ -75,7 +75,9 @@ fn move_to_trash(path: &str) -> Result<(), String> {
     if let Err(_error) = context.delete(path) {
         let mut fallback = trash::TrashContext::default();
         fallback.set_delete_method(DeleteMethod::Finder);
-        fallback.delete(path).map_err(|fallback_error| fallback_error.to_string())
+        fallback
+            .delete(path)
+            .map_err(|fallback_error| fallback_error.to_string())
     } else {
         Ok(())
     }
@@ -430,7 +432,10 @@ impl FileNode {
     /// shallow directory read is only needed when a folder has changed since
     /// it was indexed (or has not yet been indexed).
     fn hydrate_subfolder_states(nodes: &mut [Self]) {
-        let paths = nodes.iter().map(|node| node.path.clone()).collect::<Vec<_>>();
+        let paths = nodes
+            .iter()
+            .map(|node| node.path.clone())
+            .collect::<Vec<_>>();
         let cached = FolderSubfolderState::get_many(&paths).unwrap_or_else(|error| {
             eprintln!("Failed to read folder subfolder-state cache: {}", error);
             HashMap::new()
@@ -1658,6 +1663,8 @@ struct SyncedFileTask {
     file_type: i64,
     orientation: i32,
     album_id: i64,
+    needs_embedding: bool,
+    needs_ocr: bool,
 }
 
 #[derive(Default)]
@@ -1716,11 +1723,7 @@ pub(crate) struct AlbumRemovalGuard {
 
 impl AlbumRemovalGuard {
     pub(crate) fn acquire(album_id: i64) -> Self {
-        *REMOVING_ALBUMS
-            .lock()
-            .unwrap()
-            .entry(album_id)
-            .or_default() += 1;
+        *REMOVING_ALBUMS.lock().unwrap().entry(album_id).or_default() += 1;
         Self { album_id }
     }
 }
@@ -1925,13 +1928,16 @@ fn sync_dirty_folders_by_mtime(
                 .ok()
                 .and_then(|info| info.modified)
         });
-        let _ = FolderSubfolderState::update_after_scan(folder.album_id, &[FolderSubfolderState {
-            path: folder.path,
-            created_at: None,
-            modified_at,
-            inode: None,
-            has_subfolders: child_scan.has_subfolders,
-        }]);
+        let _ = FolderSubfolderState::update_after_scan(
+            folder.album_id,
+            &[FolderSubfolderState {
+                path: folder.path,
+                created_at: None,
+                modified_at,
+                inode: None,
+                has_subfolders: child_scan.has_subfolders,
+            }],
+        );
     }
 
     Ok((
@@ -2127,13 +2133,16 @@ fn sync_folder_direct_files(
                     if is_live_photo_candidate_name(&old_file_name) {
                         live_photo_affected_names.insert(old_file_name);
                     }
-                    if should_process_synced_file(&updated_file, ftype) {
+                    if should_process_synced_file(&updated_file, ftype, file_path_str) {
                         tasks.push(SyncedFileTask {
                             file_id: db_id,
                             file_path: file_path_str.to_string(),
                             file_type: ftype,
                             orientation: updated_file.e_orientation.unwrap_or(1) as i32,
                             album_id,
+                            needs_embedding: matches!(ftype, 1 | 3)
+                                && !updated_file.has_embedding.unwrap_or(false),
+                            needs_ocr: file_needs_ocr(&updated_file, ftype, file_path_str),
                         });
                     }
                 }
@@ -2154,7 +2163,7 @@ fn sync_folder_direct_files(
                                 live_photo_affected_names.insert(file_name.clone());
                             }
                         }
-                        if should_process_synced_file(&file, ftype) {
+                        if should_process_synced_file(&file, ftype, file_path_str) {
                             if let Some(file_id) = file.id {
                                 tasks.push(SyncedFileTask {
                                     file_id,
@@ -2162,6 +2171,9 @@ fn sync_folder_direct_files(
                                     file_type: ftype,
                                     orientation: file.e_orientation.unwrap_or(1) as i32,
                                     album_id,
+                                    needs_embedding: matches!(ftype, 1 | 3)
+                                        && !file.has_embedding.unwrap_or(false),
+                                    needs_ocr: file_needs_ocr(&file, ftype, file_path_str),
                                 });
                             }
                         }
@@ -2234,12 +2246,11 @@ fn sync_folder_direct_files(
         }
     }
 
-    let pairing_result =
-        AFile::pair_live_photos_in_folder(
-            folder_id,
-            &live_photo_affected_names,
-            full_live_photo_reindex,
-        );
+    let pairing_result = AFile::pair_live_photos_in_folder(
+        folder_id,
+        &live_photo_affected_names,
+        full_live_photo_reindex,
+    );
     if full_live_photo_reindex {
         pairing_result.map_err(|error| {
             format!(
@@ -2275,7 +2286,10 @@ fn sync_folder_direct_files(
 }
 
 fn pair_live_photos_after_album_index(album_id: i64) -> Result<(), String> {
-    for folder in AFolder::get_all()?.into_iter().filter(|folder| folder.album_id == album_id) {
+    for folder in AFolder::get_all()?
+        .into_iter()
+        .filter(|folder| folder.album_id == album_id)
+    {
         let folder_id = folder
             .id
             .ok_or_else(|| format!("Folder has no id: {}", folder.path))?;
@@ -2302,11 +2316,7 @@ fn pair_live_photos_after_album_index(album_id: i64) -> Result<(), String> {
             FolderScanState::LIVE_PHOTO_PAIRING,
             FolderScanState::LIVE_PHOTO_PAIRING_VERSION,
         )?;
-        AFile::pair_live_photos_in_folder(
-            folder_id,
-            &affected_names,
-            refresh_missing_identifiers,
-        )?;
+        AFile::pair_live_photos_in_folder(folder_id, &affected_names, refresh_missing_identifiers)?;
         FolderScanState::mark_completed(
             folder_id,
             FolderScanState::LIVE_PHOTO_PAIRING,
@@ -2429,13 +2439,16 @@ pub fn sync_single_folder(
             AFile::clear_raw_jpeg_pairs_in_folder(resolved_folder_id)? > 0
         };
         let folder_layout_changed = new_folder_count > 0 || child_scan.deleted_folder_count > 0;
-        let _ = FolderSubfolderState::update_after_scan(album_id, &[FolderSubfolderState {
-            path: folder_path.to_string(),
-            created_at: None,
-            modified_at: info.modified,
-            inode: None,
-            has_subfolders: child_scan.has_subfolders,
-        }]);
+        let _ = FolderSubfolderState::update_after_scan(
+            album_id,
+            &[FolderSubfolderState {
+                path: folder_path.to_string(),
+                created_at: None,
+                modified_at: info.modified,
+                inode: None,
+                has_subfolders: child_scan.has_subfolders,
+            }],
+        );
         return Ok(FolderMtimeSyncResult {
             // The frontend uses this to decide whether it needs to reload the
             // current list.  A newly created or cleared association changes
@@ -2468,13 +2481,16 @@ pub fn sync_single_folder(
     }
 
     let mtime = info.modified;
-    let _ = FolderSubfolderState::update_after_scan(album_id, &[FolderSubfolderState {
-        path: folder_path.to_string(),
-        created_at: None,
-        modified_at: mtime,
-        inode: None,
-        has_subfolders: child_scan.has_subfolders,
-    }]);
+    let _ = FolderSubfolderState::update_after_scan(
+        album_id,
+        &[FolderSubfolderState {
+            path: folder_path.to_string(),
+            created_at: None,
+            modified_at: mtime,
+            inode: None,
+            has_subfolders: child_scan.has_subfolders,
+        }],
+    );
 
     Ok(FolderMtimeSyncResult {
         dirty_folder_count: 1,
@@ -2488,11 +2504,51 @@ pub fn sync_single_folder(
     })
 }
 
-fn should_process_synced_file(file: &AFile, file_type: i64) -> bool {
+fn file_needs_ocr(file: &AFile, file_type: i64, file_path: &str) -> bool {
+    file_type == 1
+        && crate::t_ocr::supports_path(file_path)
+        && (file.ocr_status.unwrap_or(0) == 0
+            || file.ocr_engine.as_deref() != Some(crate::t_ocr::OCR_ENGINE_ID))
+}
+
+fn should_process_synced_file(file: &AFile, file_type: i64, file_path: &str) -> bool {
     if !file.has_thumbnail.unwrap_or(false) {
         return true;
     }
-    matches!(file_type, 1 | 3) && !file.has_embedding.unwrap_or(false)
+    (matches!(file_type, 1 | 3) && !file.has_embedding.unwrap_or(false))
+        || file_needs_ocr(file, file_type, file_path)
+}
+
+fn run_ocr_for_file(
+    app_handle: &tauri::AppHandle,
+    file_id: i64,
+    file_path: &str,
+) -> Result<bool, String> {
+    let ocr_state: State<crate::t_ocr::OcrState> = app_handle.state();
+    let outcome = ocr_state
+        .0
+        .lock()
+        .map_err(|_| "OCR engine lock was poisoned".to_string())?
+        .recognize(app_handle, file_path);
+
+    match outcome {
+        Ok(crate::t_ocr::OcrOutcome::Text(text)) => {
+            AFile::update_ocr_result(file_id, Some(&text), 1, crate::t_ocr::OCR_ENGINE_ID)?;
+            Ok(true)
+        }
+        Ok(crate::t_ocr::OcrOutcome::Empty) => {
+            AFile::update_ocr_result(file_id, None, 2, crate::t_ocr::OCR_ENGINE_ID)?;
+            Ok(true)
+        }
+        Ok(crate::t_ocr::OcrOutcome::Unsupported) => {
+            AFile::update_ocr_result(file_id, None, 4, crate::t_ocr::OCR_ENGINE_ID)?;
+            Ok(true)
+        }
+        Err(error) => {
+            let _ = AFile::update_ocr_result(file_id, None, 3, crate::t_ocr::OCR_ENGINE_ID);
+            Err(error)
+        }
+    }
 }
 
 fn schedule_synced_file_processing(app_handle: tauri::AppHandle, task: SyncedFileTask) {
@@ -2540,6 +2596,22 @@ fn schedule_synced_file_processing(app_handle: tauri::AppHandle, task: SyncedFil
         );
 
         if !matches!(task.file_type, 1 | 3) {
+            return;
+        }
+
+        if task.needs_ocr {
+            let app_handle_for_ocr = app_handle.clone();
+            let file_path = task.file_path.clone();
+            let file_id = task.file_id;
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = run_ocr_for_file(&app_handle_for_ocr, file_id, &file_path) {
+                    eprintln!("Failed to run OCR for {}: {}", file_path, error);
+                }
+            })
+            .await;
+        }
+
+        if !task.needs_embedding {
             return;
         }
 
@@ -3005,6 +3077,8 @@ struct ThumbnailTask {
     duration: Option<u64>,
     is_heavy: bool,
     processed_already_ready: bool,
+    needs_embedding: bool,
+    needs_ocr: bool,
 }
 
 struct FileIndexOutcome {
@@ -3018,6 +3092,7 @@ struct ProcessingBudget {
     normal_thumb: Arc<Semaphore>,
     heavy_thumb: Arc<Semaphore>,
     embedding: Arc<Semaphore>,
+    ocr: Arc<Semaphore>,
 }
 
 impl ProcessingBudget {
@@ -3032,6 +3107,7 @@ impl ProcessingBudget {
             normal_thumb: Arc::new(Semaphore::new(normal_budget)),
             heavy_thumb: Arc::new(Semaphore::new(heavy_budget)),
             embedding: Arc::new(Semaphore::new(1)),
+            ocr: Arc::new(Semaphore::new(1)),
         }
     }
 }
@@ -3226,13 +3302,15 @@ fn index_single_file(
                     if let Some(file_id) = file.id {
                         let has_thumbnail = file.has_thumbnail.unwrap_or(false);
                         let has_embedding = file.has_embedding.unwrap_or(false);
+                        let needs_ocr = file_needs_ocr(&file, ftype, path_str);
                         let processed_immediately = has_thumbnail;
                         let search_ready_immediately = match ftype {
                             1 | 3 => has_thumbnail && has_embedding,
                             _ => false,
                         };
                         let fully_indexed = match ftype {
-                            1 | 3 => search_ready_immediately,
+                            1 => search_ready_immediately && !needs_ocr,
+                            3 => search_ready_immediately,
                             2 => processed_immediately,
                             _ => false,
                         };
@@ -3256,6 +3334,8 @@ fn index_single_file(
                                     file.height.unwrap_or(0),
                                 ),
                                 processed_already_ready: has_thumbnail,
+                                needs_embedding: matches!(ftype, 1 | 3) && !has_embedding,
+                                needs_ocr,
                             })
                         };
 
@@ -3355,6 +3435,30 @@ async fn process_thumbnail_task(
     }
 
     if !matches!(task.file_type, 1 | 3) {
+        return Ok(true);
+    }
+
+    if task.needs_ocr {
+        let _ocr_permit = budget
+            .ocr
+            .acquire()
+            .await
+            .map_err(|error| format!("Failed to acquire OCR permit: {error}"))?;
+        let app_handle_for_ocr = app_handle.clone();
+        let file_id = task.file_id;
+        let file_path = task.file_path.clone();
+        let ocr_result = tauri::async_runtime::spawn_blocking(move || {
+            run_ocr_for_file(&app_handle_for_ocr, file_id, &file_path)
+                .map_err(|error| format!("Failed to run OCR for {file_path}: {error}"))
+        })
+        .await
+        .map_err(|error| format!("OCR task failed: {error}"))?;
+        if let Err(error) = ocr_result {
+            eprintln!("{error}");
+        }
+    }
+
+    if !task.needs_embedding {
         return Ok(true);
     }
 
@@ -3674,11 +3778,11 @@ pub async fn index_album_worker(
                 album_id, error
             );
         }
-        if let Err(error) = AFolder::delete_unseen_in_album(
-            album_id,
-            &folder_subfolder_states,
-        ) {
-            eprintln!("Failed to remove stale folders from album {}: {}", album_id, error);
+        if let Err(error) = AFolder::delete_unseen_in_album(album_id, &folder_subfolder_states) {
+            eprintln!(
+                "Failed to remove stale folders from album {}: {}",
+                album_id, error
+            );
         }
 
         println!("Cleaning up removed files from DB for album {}", album_id);
@@ -3693,10 +3797,9 @@ pub async fn index_album_worker(
                 album_id, error
             );
         }
-        if let Err(error) = reconcile_raw_jpeg_pairs_after_album_index(
-            album_id,
-            group_raw_jpeg_pairs,
-        ) {
+        if let Err(error) =
+            reconcile_raw_jpeg_pairs_after_album_index(album_id, group_raw_jpeg_pairs)
+        {
             eprintln!(
                 "Failed to pair RAW+JPEG files after indexing album {}: {}",
                 album_id, error

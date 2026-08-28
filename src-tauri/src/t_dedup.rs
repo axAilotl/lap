@@ -339,6 +339,17 @@ fn get_files_by_sizes(conn: &Connection) -> Result<Vec<AFile>, String> {
                 live_photo_video_id: None,
                 live_photo_video_path: None,
                 motion_photo_offset: None,
+                ocr_text: None,
+                ocr_status: None,
+                ocr_engine: None,
+                is_ai_generated: None,
+                ai_source: None,
+                ai_prompt: None,
+                ai_negative_prompt: None,
+                ai_model: None,
+                ai_seed: None,
+                ai_workflow: None,
+                ai_metadata_json: None,
             })
         })
         .map_err(|e| e.to_string())?;

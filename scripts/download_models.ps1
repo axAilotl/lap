@@ -12,7 +12,9 @@ $Models = @(
     @{ Url = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/text_model_quantized.onnx"; File = "text_model.onnx" },
     @{ Url = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx"; File = "vision_model.onnx" },
     @{ Url = "https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/det_500m.onnx?download=true"; File = "det_500m.onnx" },
-    @{ Url = "https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/w600k_mbf.onnx?download=true"; File = "w600k_mbf.onnx" }
+    @{ Url = "https://huggingface.co/deepghs/insightface/resolve/main/buffalo_s/w600k_mbf.onnx?download=true"; File = "w600k_mbf.onnx" },
+    @{ Url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten"; File = "text-detection.rten" },
+    @{ Url = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten"; File = "text-recognition.rten" }
 )
 
 Write-Host "Downloading $($Models.Count) models into $TargetDir..."

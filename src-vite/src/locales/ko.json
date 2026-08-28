@@ -1015,7 +1015,15 @@
     "geo_location": "위치",
     "tags": "태그",
     "comment": "메모",
-    "capture_settings": "촬영 설정"
+    "capture_settings": "촬영 설정",
+    "ai_source": "생성 도구",
+    "ai_prompt": "프롬프트",
+    "ai_negative_prompt": "네거티브 프롬프트",
+    "ai_model": "AI 모델",
+    "ai_seed": "시드",
+    "ai_workflow": "워크플로",
+    "ocr_text": "감지된 텍스트",
+    "view_json": "JSON 보기"
   },
   "map": {
     "show_map": "지도 보기",

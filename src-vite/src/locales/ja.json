@@ -1015,7 +1015,15 @@
     "geo_location": "位置",
     "tags": "タグ",
     "comment": "コメント",
-    "capture_settings": "撮影設定"
+    "capture_settings": "撮影設定",
+    "ai_source": "生成元",
+    "ai_prompt": "プロンプト",
+    "ai_negative_prompt": "ネガティブプロンプト",
+    "ai_model": "AIモデル",
+    "ai_seed": "シード",
+    "ai_workflow": "ワークフロー",
+    "ocr_text": "検出テキスト",
+    "view_json": "JSONを表示"
   },
   "map": {
     "show_map": "地図を表示",

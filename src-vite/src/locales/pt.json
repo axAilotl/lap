@@ -1015,7 +1015,15 @@
     "geo_location": "Local",
     "tags": "Tags",
     "comment": "Comentário",
-    "capture_settings": "Config. captura"
+    "capture_settings": "Config. captura",
+    "ai_source": "Gerado por",
+    "ai_prompt": "Prompt",
+    "ai_negative_prompt": "Prompt negativo",
+    "ai_model": "Modelo de IA",
+    "ai_seed": "Seed",
+    "ai_workflow": "Fluxo de trabalho",
+    "ocr_text": "Texto detectado",
+    "view_json": "Ver JSON"
   },
   "map": {
     "show_map": "Mostrar mapa",

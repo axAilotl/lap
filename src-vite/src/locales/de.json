@@ -1015,7 +1015,15 @@
     "geo_location": "Ort",
     "tags": "Tags",
     "comment": "Kommentar",
-    "capture_settings": "Aufnahmeeinst."
+    "capture_settings": "Aufnahmeeinst.",
+    "ai_source": "Erstellt mit",
+    "ai_prompt": "Prompt",
+    "ai_negative_prompt": "Negativer Prompt",
+    "ai_model": "KI-Modell",
+    "ai_seed": "Seed",
+    "ai_workflow": "Workflow",
+    "ocr_text": "Erkannter Text",
+    "view_json": "JSON anzeigen"
   },
   "map": {
     "show_map": "Karte anzeigen",
